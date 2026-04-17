@@ -1,0 +1,658 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRICK A4IF AUTOMATON TOOLS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Tinos:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:wght@300;400;600;700&family=Nanum+Pen+Script&family=Sacramento&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+        import { getDatabase, ref, set, get, update, onValue, remove, push, child, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCG_KJ4HSoirctXqebAB6VBCMx_al1K3O4",
+            authDomain: "dpdt-gov-bd.firebaseapp.com",
+            databaseURL: "https://dpdt-gov-bd-default-rtdb.firebaseio.com",
+            projectId: "dpdt-gov-bd",
+            storageBucket: "dpdt-gov-bd.firebasestorage.app",
+            messagingSenderId: "1076465542339",
+            appId: "1:1076465542339:web:0ee2f35d7d5fe4258bee76",
+            measurementId: "G-6GMKVY19NB"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        window.db = db;
+        window.dbRef = ref; window.dbSet = set; window.dbGet = get; window.dbUpdate = update;
+        window.dbOnValue = onValue; window.dbRemove = remove; window.dbPush = push;
+        window.dbChild = child; window.dbOnDisconnect = onDisconnect; window.serverTimestamp = serverTimestamp;
+
+        window.validateAuth = async function(emailOrUser, pass, isAuto) {
+            if(!emailOrUser || !pass) {
+                if(!isAuto) alert("Please enter both ID/Email and Password");
+                return;
+            }
+            const cleanKey = emailOrUser.toLowerCase().trim().replace(/[.$#[\]]/g, "_");
+            if((emailOrUser.toLowerCase() === "admin@a4if.com" || emailOrUser.toLowerCase() === "admin") && String(pass) === "893828") {
+                setupUser({ email: "admin@a4if.com", role: 'admin', status: 'active' });
+                return;
+            }
+            try {
+                const userRef = window.dbRef(window.db, 'users/' + cleanKey);
+                const snap = await window.dbGet(userRef);
+                if(!snap.exists()) {
+                    if(!isAuto) alert("Account not found!");
+                    return;
+                }
+                const uData = snap.val();
+                if (String(uData.pass).trim() !== String(pass).trim()) {
+                    if(!isAuto) alert("Invalid Password!");
+                    return;
+                }
+                if(uData.status === 'paused') {
+                    alert("Account is currently paused by Admin."); return;
+                }
+                if(uData.expiry_date && uData.expiry_date !== 'lifetime') {
+                    if(new Date(uData.expiry_date) < new Date()) {
+                        alert("Account Expired! Please renew."); logout(); return;
+                    }
+                }
+                sessionStorage.setItem('a4if_session', JSON.stringify({email: emailOrUser, pass: pass}));
+                await window.dbUpdate(userRef, { last_active: Date.now() });
+                setupUser(uData);
+                if(!isAuto) {
+                    logSecurity(uData.email || emailOrUser);
+                    showAlert("Login Successful!");
+                }
+            } catch(err) {
+                console.error("Auth Error:", err);
+            }
+        };
+
+        window.addNewUser = async function() {
+            const id = document.getElementById('new-user-email').value.trim();
+            const pass = document.getElementById('new-user-pass').value.trim();
+            const limit = parseInt(document.getElementById('new-user-limit').value) || 10;
+            const role = document.getElementById('new-user-role').value;
+            const expDays = document.getElementById('new-user-expiry').value;
+            if(!id || !pass) { alert("ID and Password are required!"); return; }
+            const userKey = id.toLowerCase().trim().replace(/[.$#[\]]/g, "_");
+            let expiryDate = 'lifetime';
+            if(expDays !== 'lifetime') {
+                let d = new Date();
+                d.setDate(d.getDate() + parseInt(expDays));
+                expiryDate = d.toISOString();
+            }
+            try {
+                await window.dbSet(window.dbRef(window.db, 'users/' + userKey), {
+                    email: id, pass: pass, role: role, daily_limit: limit, 
+                    usage_count: 0, expiry_date: expiryDate, last_active: Date.now(), status: 'active'
+                });
+                showAlert("User Created Successfully!");
+            } catch (err) { alert("Error: " + err.message); }
+        };
+
+        window.handleLoginClick = function() {
+            const e = document.getElementById('login-email').value;
+            const p = document.getElementById('login-pass').value;
+            window.validateAuth(e, p, false);
+        };
+
+        window.addEventListener('load', () => {
+            if (localStorage.getItem('theme') === 'light') {
+                document.body.classList.add('light-mode');
+            }
+            const savedUser = sessionStorage.getItem('a4if_session');
+            if(savedUser) { 
+                const userData = JSON.parse(savedUser); 
+                window.validateAuth(userData.email, userData.pass, true); 
+            }
+        });
+
+        window.resetUserLimit = function(userKey) {
+            if(confirm("Reset usage for this user?")) {
+                window.dbUpdate(window.dbRef(window.db, 'users/' + userKey), { usage_count: 0 })
+                .then(() => showAlert("Limit Reset Done!"));
+            }
+        };
+    </script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        :root { --gold: #ffcc00; --gold-gradient: linear-gradient(135deg, #f1c40f, #d4af37); --navy-dark: #1e293b; --panel-bg: rgba(51, 65, 85, 0.8); --text-light: #f8fafc; --sidebar-width: 280px; --body-bg: radial-gradient(circle at top right, #334155, #0f172a); }
+        .light-mode { --navy-dark: #f1f5f9; --panel-bg: rgba(255, 255, 255, 0.9); --text-light: #1e293b; --body-bg: #e2e8f0; }
+        * { box-sizing: border-box; transition: all 0.3s ease; margin: 0; padding: 0; }
+        body { background: var(--body-bg); font-family: 'Poppins', sans-serif; color: var(--text-light); min-height: 100vh; overflow-x: hidden; }
+        .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; width: var(--sidebar-width); background: rgba(15, 23, 42, 0.98); backdrop-filter: blur(15px); z-index: 10000; padding: 30px 20px; border-right: 1px solid rgba(212, 175, 55, 0.3); }
+        .sidebar.active { left: 0; }
+        .sidebar-close { position: absolute; right: 15px; top: 15px; font-size: 24px; color: var(--gold); cursor: pointer; display: none; }
+        .sidebar.active .sidebar-close { display: block; }
+        .sidebar-item { padding: 15px 20px; margin-bottom: 10px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 15px; color: #cbd5e1; }
+        .sidebar-item.active { background: var(--gold-gradient); color: #000; }
+        .sidebar-item:hover { background: rgba(255,255,255,0.05); color: var(--gold); }
+        .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.95); display: flex; align-items: center; justify-content: center; z-index: 20000; backdrop-filter: blur(15px); }
+        .premium-card { background: var(--panel-bg); padding: 40px; border-radius: 30px; width: 90%; max-width: 500px; text-align: center; border: 1px solid rgba(255,255,255,0.1); overflow-y: auto; max-height: 90vh; }
+        .main-wrapper { padding: 30px; max-width: 1300px; margin: auto; }
+        .header-nav { display: flex; justify-content: space-between; align-items: center; background: var(--panel-bg); padding: 20px 35px; border-radius: 20px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
+        .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; background: var(--panel-bg); padding: 35px; border-radius: 30px; margin-bottom: 40px; border: 1px solid rgba(255,255,255,0.1); }
+        .input-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
+        .input-group label { font-size: 11px; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: 1px; }
+        input, textarea, select { background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 14px; border-radius: 12px; outline: none; }
+        input:focus { border-color: var(--gold); background: rgba(15, 23, 42, 1); }
+        .btn-premium { background: var(--gold-gradient); color: #000; border: none; padding: 12px 25px; border-radius: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px; justify-content: center; text-decoration: none; }
+        .btn-outline { background: transparent; border: 1px solid var(--gold); color: var(--gold); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 11px; }
+        .data-table { width: 100%; border-collapse: collapse; margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 15px; overflow: hidden; }
+        .data-table th, .data-table td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+        .data-table th { color: var(--gold); background: rgba(255,255,255,0.05); }
+        #notice-popup { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--gold-gradient); color: #000; padding: 20px 40px; border-radius: 50px; z-index: 50000; font-weight: bold; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid #fff; }
+        .cert-container { background: #dadada; padding: 50px 20px; display: flex; justify-content: center; border-radius: 30px; overflow-x: auto; position: relative; }
+        #cert-print { width: 210mm; height: 297mm; background-color: #FCFBF4; background-image: url('https://www.transparenttextures.com/patterns/paper-fibers.png'); padding: 0.6in 0.75in; box-sizing: border-box; position: relative; color: #111; font-family: 'Tinos', 'Times New Roman', serif; font-size: 12pt; text-align: left; box-shadow: 0 0 40px rgba(0,0,0,0.5); -webkit-print-color-adjust: exact; print-color-adjust: exact; overflow: hidden; }
+        .c-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px; }
+        .c-serial-hand { font-family: 'Nanum Pen Script', cursive; font-size: 21pt; color: #222; border-bottom: 1px dotted #888; margin-left: 8px; padding: 0 5px; display: inline-block; transform: translateY(-2px); }
+        .c-auth { display: grid; grid-template-columns: 100px 1fr 100px; align-items: center; margin-bottom: 12mm; gap: 10px; text-align: center; }
+        .c-gov-seal, .c-dpdt-logo { max-width: 90px; height: auto; }
+        .c-address { text-align: center; }
+        .c-gov-title { font-size: 15.5pt; font-weight: bold; margin-bottom: 3px; }
+        .c-dept-details { font-size: 13pt; line-height: 1.1; }
+        .c-cert-title { font-size: 14.5pt; font-weight: bold; font-style: italic; text-align: center; margin: 20px 0; }
+        .c-data-row { display: flex; justify-content: space-between; margin-bottom: 10mm; position: relative; }
+        .c-content { text-align: justify; line-height: 1.25; margin-bottom: 15mm; }
+        .c-logo-box { text-align: center; margin: 5mm 0; position: relative; min-height: 100px; display: flex; flex-direction: column; align-items: center; justify-content: center; } 
+        .c-logo-text { font-family: 'Arial Narrow', sans-serif; font-weight: bold; font-size: 26pt; line-height: 1; mix-blend-mode: multiply; opacity: 0.95; letter-spacing: 1px; text-transform: uppercase; }
+        #disp-logo-img { max-height: 110px; max-width: 250px; display: none; object-fit: contain; mix-blend-mode: multiply; margin-bottom: 2px; }
+        .c-sub-word-logo { font-size: 10pt; color: #333; font-weight: 600; margin-top: 1px; mix-blend-mode: multiply; position: relative; }
+        .c-footer { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10mm; font-size: 11.5pt; }
+        .c-blue-stamp { font-family: Arial, sans-serif; font-weight: bold; color: #1A4D8F; border: 2px solid #1A4D8F; padding: 3px 8px; transform: rotate(1.5deg); display: inline-block; mix-blend-mode: multiply; }
+        .c-dotted-fill { display: inline-block; width: 60px; border-bottom: 1px dotted #444; transform: translateY(-3px); }
+        .c-sig-block { text-align: right; width: 50%; white-space: nowrap; }
+        .c-sig-name { font-weight: bold; display: block; border-top: 0.5px solid #333; padding-top: 2px; margin-top: 1px; font-size: 11pt; }
+        .c-sig-space { height: 55px; margin-bottom: 0; display: flex; justify-content: flex-end; align-items: center; font-family: 'Sacramento', cursive; font-size: 18pt; color: #000; padding-right: 10px; overflow: hidden; line-height: 0.8; }
+        .c-hr { height: 0.5px; background-color: #333; margin: 10mm 0 5mm 0; opacity: 0.5; border: none;}
+        .c-notes { font-size: 9.5pt; text-align: center; line-height: 1.3; color: #333; }
+
+        /* QR FIXES */
+        #qrcode { position:absolute; bottom:110px; right:50px; background: transparent; padding: 0; mix-blend-mode: multiply; display: none; transform: scale(1.05); }
+        #qrcode img, #qrcode canvas { background-color: #FCFBF4 !important; }
+
+        .hidden { display: none !important; }
+        #success-alert { position: fixed; top: 30px; right: 30px; background: #10b981; color: white; padding: 18px 30px; border-radius: 15px; display: none; z-index: 30000; }
+        .lang-switch { display: flex; gap: 5px; background: rgba(0,0,0,0.2); padding: 5px; border-radius: 10px; margin-left: 15px; }
+        .lang-btn { background: transparent; border: none; color: #fff; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+        .lang-btn.active { background: var(--gold); color: #000; }
+        .bold { font-weight: bold; }
+        .full-w { grid-column: 1/-1; }
+        .wa-btn { background: #25d366 !important; color: #fff !important; margin-top: 15px; width: 100%; border-radius: 12px; font-size: 14px; }
+        .back-btn-ui { position: absolute; top: 20px; left: 20px; cursor: pointer; color: var(--gold); font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; z-index: 100; transition: 0.2s; }
+        .back-btn-ui:hover { opacity: 0.8; transform: translateX(-3px); }
+        #maintenance-overlay { background: #0f172a; flex-direction: column; text-align: center; padding: 40px; }
+        .rand-btn { position: absolute; right: 10px; top: 32px; background: var(--gold-gradient); border: none; padding: 5px 10px; border-radius: 8px; font-size: 10px; font-weight: bold; cursor: pointer; z-index: 5; }
+        #sub-notice-overlay { z-index: 60000; display: none; }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+<div id="notice-popup"></div>
+
+<div id="maintenance-overlay" class="overlay hidden">
+    <i class="fas fa-tools" style="font-size: 60px; color: var(--gold); margin-bottom: 20px;"></i>
+    <h1 style="color:var(--gold)">System Under Maintenance</h1>
+    <p style="margin-top:10px;">We are upgrading our systems. Please check back later.</p>
+    <button class="btn-premium" style="margin-top:20px" onclick="location.reload()">RETRY</button>
+</div>
+
+<div id="sub-notice-overlay" class="overlay">
+    <div class="premium-card">
+        <h2 style="color:var(--gold); margin-bottom:20px;">Subscription Plan</h2>
+        <div class="sub-notice-text" style="text-align: left; font-size: 14px; line-height: 1.6; color: #fff; white-space: pre-line;">
+            আসসালামু আলাইকুম, আমাদের কোন রিফান্ড পলিসি নেই। 
+            পেমেন্ট বুঝে করবেন। কাজ করতে না পারলে টিক্স আরিফ দায়ী নয়।
+
+            <b>Plan:</b>
+            7 Days – 400 Tk  
+            15 Days – 700 Tk  
+            20 Days – 900 Tk
+            30 Days – 1200 Tk  
+
+            Life Time – যতদিন সাইট active থাকবে (জানতে এডমিনকে নক দিন)
+
+            <b>Payment:</b>
+            +8801576419581 (Nagad Send Money)
+
+            Payment করার পর এই নাম্বারে WhatsApp-এ মেসেজ দিয়ে একাউন্ট এক্টিভ করুন।
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button class="btn-premium" style="flex:1" onclick="document.getElementById('sub-notice-overlay').style.display='none'">বন্ধ করুন</button>
+            <a href="https://wa.me/8801576419581?text=I%20want%20to%20buy%20subscription" target="_blank" class="btn-premium wa-btn" style="flex:1; margin-top:0"><i class="fab fa-whatsapp"></i> মেসেজ দিন</a>
+        </div>
+    </div>
+</div>
+
+<div id="agreement-overlay" class="overlay">
+    <div class="premium-card">
+        <i class="fas fa-shield-alt" style="font-size: 50px; color: var(--gold); margin-bottom: 20px;"></i>
+        <h2 style="color:var(--gold)">আসসালামু আলাইকুম</h2>
+        <div style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 15px; margin: 25px 0; font-size: 14px; text-align: left; line-height: 1.6;">
+            <p>এ টুলস শুধু মাত্র অনলাইন ক্রিয়েটর যারা ট্রেডমার্ক লাইসেন্স করতে পারছো না, তাদের জন্য এ টুলস।</p>
+            <p style="margin-top: 10px;">এটা কেও বাজে কাজে ইউজ করলে TRICK A4IF দায়ী নয়।</p>
+            <p style="margin-top: 10px; color: #ff6b6b; font-weight: bold;">তোমরা হাদি হত্যা ও ধর্ষণ এবং চাঁদাবাজির বিচার করো। নয়তো স্বৈরাচার বলে যাকে বিদায় করেছো, আমরাও তোমাদের স্বৈরাচারীতা ও ক্ষমতার অপব্যবহারের জন্য সাইবার হামলা দিব।</p>
+        </div>
+        <button class="btn-premium" style="width:100%" onclick="window.showLogin()">I AGREE</button>
+        <button class="btn-premium wa-btn" onclick="document.getElementById('sub-notice-overlay').style.display='flex'"><i class="fas fa-crown"></i> Subscription নিন / আমাদের প্ল্যান দেখুন</button>
+    </div>
+</div>
+
+<div id="login-overlay" class="overlay" style="display:none;">
+    <div class="premium-card" style="position:relative;">
+        <div class="back-btn-ui" onclick="location.reload()"><i class="fas fa-arrow-left"></i> BACK</div>
+        <img src="https://i.ibb.co.com/HDkTwrKt/image.jpg" style="width: 80px; height: 80px; border-radius: 50%; border: 2px solid var(--gold); margin-bottom: 15px; margin-top:20px;">
+        <h3>SYSTEM AUTH</h3>
+        <p style="font-size: 12px; margin-bottom: 10px; color: #cbd5e1;">Login with Email or User ID</p>
+        <input type="text" id="login-email" placeholder="Email / Username" style="width: 100%; margin-top: 15px;">
+        <input type="password" id="login-pass" placeholder="Enter Password" style="width: 100%; margin-top: 15px; margin-bottom: 20px;">
+        <button class="btn-premium" style="width:100%" onclick="window.handleLoginClick()">SIGN IN</button>
+        <button class="btn-premium wa-btn" onclick="document.getElementById('sub-notice-overlay').style.display='flex'"><i class="fas fa-crown"></i> Subscription নিন / আমাদের প্ল্যান দেখুন</button>
+    </div>
+</div>
+
+<nav class="sidebar" id="sidebar">
+    <div class="sidebar-close" onclick="toggleSidebar()"><i class="fas fa-times"></i></div>
+    <div style="text-align: center; margin-bottom: 40px; margin-top: 20px;"><h2 style="color: var(--gold);">A4IF PRO</h2></div>
+    <div class="sidebar-item active" onclick="showSection('gen-sec', this)"><i class="fas fa-edit"></i> Generator Home</div>
+    <div class="sidebar-item" onclick="showSection('db-sec', this)"><i class="fas fa-database"></i> Database Records</div>
+    
+    <div class="adm-only hidden">
+        <div class="sidebar-item" onclick="showSection('user-sec', this)"><i class="fas fa-users"></i> User Management</div>
+        <div class="sidebar-item" onclick="showSection('notice-sec', this)"><i class="fas fa-bullhorn"></i> System Notices</div>
+        <div class="sidebar-item" onclick="showSection('maint-sec', this)"><i class="fas fa-cogs"></i> Maintenance</div>
+        <div class="sidebar-item" onclick="showSection('ip-sec', this)"><i class="fas fa-network-wired"></i> IP Logs</div>
+    </div>
+
+    <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+        <div class="sidebar-item" onclick="toggleTheme()"><i class="fas fa-adjust"></i> Toggle Theme</div>
+        <div class="sidebar-item" style="color: #ef4444;" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</div>
+    </div>
+</nav>
+
+<div id="main-app" class="main-wrapper" style="display:none;">
+    <header class="header-nav">
+        <div style="display:flex; align-items:center; gap:20px;">
+            <i class="fas fa-bars" style="font-size: 24px; cursor:pointer; color: var(--gold);" onclick="toggleSidebar()"></i>
+            <div><h3 id="page-title">TRICK A4IF AUTOMATON TOOLS</h3><p style="font-size: 11px; color: #cbd5e1;">SYSTEM OPERATOR: <span id="current-user-display">---</span></p></div>
+            <div class="lang-switch">
+                <button class="lang-btn active" id="lang-en" onclick="setLanguage('en')">EN</button>
+                <button class="lang-btn" id="lang-bn" onclick="setLanguage('bn')">BN</button>
+            </div>
+        </div>
+        <div id="user-limit-info" style="font-size: 12px; color: var(--gold); text-align: right;"></div>
+    </header>
+
+    <div id="gen-sec" class="app-section">
+        <div class="control-grid">
+            <div class="input-group"><label id="l1">1. Form Name</label><input type="text" id="i1" value="TMR-1 Form" oninput="sync()"></div>
+            <div class="input-group full-w"><label id="l3">3. Certificate Title</label><input type="text" id="i3" value="Certificate of Registration of Trademark [Rule 30(1)]" oninput="sync()"></div>
+            <div class="input-group"><label id="l4">4. Trademark Number</label><div style="display:flex; gap:5px;"><input type="text" id="i4" value="253532" oninput="sync()" style="flex:1;"><button class="btn-premium" style="padding:5px 10px;" onclick="makeRand('i4')">R</button></div></div>
+            <div class="input-group"><label id="l5">5. Reg Date</label><input type="text" id="i5" value="19/11/2020" oninput="handleField5Input()"><button class="rand-btn" onclick="generateDateForField(5)">RANDOM</button></div>
+            <div class="input-group"><label id="l6">6. Sealing Date</label><input type="text" id="i6" value="01 OCT 2024" oninput="handleField6Input()"><button class="rand-btn" onclick="generateDateForField(6)">RANDOM</button></div>
+            <div class="input-group"><label id="l7">7. Class</label><input type="text" id="i7" value="41" oninput="sync()"></div>
+            <div class="input-group full-w"><label id="l8">8. Owner/Company</label><input type="text" id="i8" value="ARIFULL ISLAM CREATOR A4IF" oninput="sync()"></div>
+            <div class="input-group full-w"><label id="l9">9. Address</label><textarea id="i9" rows="1" oninput="sync()">Office No: 321 & 324, Level-3, Plot: GA, Satmosjid Supermarket, Mohammadpur, Dhaka.</textarea><button class="rand-btn" onclick="generateRandomAddress()">RANDOM</button></div>
+            <div class="input-group full-w"><label id="l10">10. Service Desc</label><textarea id="i10" rows="1" oninput="sync()">Sports and cultural activities, sports camp services, and all other services.</textarea></div>
+            <div class="input-group"><label id="l11">11. Pen Serial</label><input type="text" id="i11" value="75362" oninput="sync()"></div>
+            <div class="input-group"><label id="l12">12. Signatory</label>
+                <select id="i12" onchange="sync()">
+                    <option value="Md. Munim Hassan">Md. Munim Hassan</option>
+                    <option value="Md. Abdur Rouf">Md. Abdur Rouf</option>
+                    <option value="Abu Sayed Md. Belal">Abu Sayed Md. Belal</option>
+                    <option value="Md. Emdadul Haque">Md. Emdadul Haque</option>
+                    <option value="Arifull Islam Arif">Arifull Islam Arif</option>
+                </select>
+            </div>
+            <div class="input-group"><label id="l13">13. Designation</label><input type="text" id="i13" value="Director General" oninput="sync()"></div>
+            <div class="input-group"><label id="l14">14. Sealed Text</label><input type="text" id="i14" value="Sealed at my direction this" oninput="sync()"></div>
+            <div class="input-group full-w"><label id="l17">15. Logo Text</label><div style="display:flex; gap:5px;"><input type="text" id="i17" value="BOSS A4IF" oninput="sync()" style="flex:1;"><input type="color" id="logoColor" value="#000000" oninput="applyColor(this.value)"></div></div>
+            <div class="input-group full-w"><label id="l18">17. Sub Word Logo (Below Logo)</label><input type="text" id="i18" value="BOSS A4IF" oninput="sync()"></div>
+            <div class="input-group full-w"><label>16. Logo Image Upload & Zoom (Def: 150)</label><div style="display:flex; gap:5px; align-items:center;"><input type="number" id="logoZoom" value="150" min="50" max="300" step="5" style="width: 80px; padding: 10px;" oninput="applyZoom(this.value)"><input type="file" id="logoUpload" accept="image/*" onchange="handleLogo(this)" style="flex:1;"></div></div>
+            <div style="grid-column: 1/-1; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top:10px;">
+                <button class="btn-premium" style="background:#3b82f6; color:#fff;" onclick="downloadFile('jpg')"><i class="fas fa-image"></i> JPG 2K DOWNLOAD</button>
+                <button class="btn-premium" style="background:#ef4444; color:#fff;" onclick="downloadFile('pdf')"><i class="fas fa-file-pdf"></i> PDF 2K DOWNLOAD</button>
+                <button class="btn-premium" style="background:#10b981; color:#fff;" onclick="saveToDB()"><i class="fas fa-cloud-upload-alt"></i> PUBLISH & GEN QR</button>
+            </div>
+        </div>
+        <div class="cert-container">
+            <div id="cert-print">
+                <div class="c-header"><div id="disp-i1">TMR-1 Form</div><div><span id="txt-sl-no">Serial No.</span> <span class="c-serial-hand" id="disp-i11">75362</span></div></div>
+                <div class="c-auth">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/8/84/Government_Seal_of_Bangladesh.svg" crossorigin="anonymous" class="c-gov-seal">
+                    <div class="c-address"><div class="c-gov-title" id="txt-gov-name">Government of the People's Republic of Bangladesh</div><div class="c-dept-details" id="txt-dept-name">Department of Patents, Designs & Trade Marks<br>Ministry of Industries, Shilpa Bhaban, Dhaka-1000.</div></div>
+                    <img src="https://i.ibb.co.com/ZqWkFGK/images-removebg-preview.png" crossorigin="anonymous" class="c-dpdt-logo">
+                </div>
+                <h1 class="c-cert-title" id="disp-i3">Certificate of Registration of Trademark [Rule 30(1)]</h1>
+                <div class="c-data-row"><div class="c-tm-no"><span id="txt-tm-no">Trademark No.</span> <span class="bold" id="disp-i4">253532</span></div><div class="c-date"><span id="txt-date">Date:</span> <span class="bold" id="disp-i5">19/11/2020</span></div></div>
+                <div class="c-content" id="disp-main-content"></div>
+                <div class="c-logo-box"><img id="disp-logo-img" src="" alt="Logo"><p class="c-logo-text" id="disp-i17">BOSS A4IF</p><div class="c-sub-word-logo" id="disp-i18">BOSS A4IF</div></div>
+                <div class="c-footer">
+                    <div><span id="txt-sealed-text">Sealed at my direction this</span> <span class="c-blue-stamp" id="disp-i6">01 OCT 2024</span> <span id="txt-day-of">day of</span> <span class="c-dotted-fill"></span> <span id="txt-month">Month</span></div>
+                    <div class="c-sig-block"><div class="c-sig-space" id="disp-sig-draw">Md. Munim Hassan</div><span class="c-sig-name" id="disp-i12">Md. Munim Hassan</span><span style="font-size:9pt; line-height:1.2; display:block;" id="txt-sig-title">Director General / Deputy Registrar<br>Department of Patents, Designs and Trademarks</span></div>
+                </div>
+                <hr class="c-hr"><div class="c-notes" id="txt-bottom-notes"></div><div id="qrcode"></div>
+                <div style="position:absolute; bottom:50px; right:50px; font-size:10px; color:#444;">verify.dpdt.gov.bd/id=<span id="verify-id-text">253532</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="db-sec" class="app-section hidden">
+        <div style="background: var(--panel-bg); padding: 30px; border-radius: 20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;"><h3>Live Records</h3><button class="btn-premium adm-only hidden" style="background:#ef4444;" onclick="resetAllCertificates()">RESET ALL</button></div>
+            <div class="search-container" style="margin-bottom: 20px; position: relative;"><i class="fas fa-search search-icon" style="position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: var(--gold);"></i><input type="text" id="record-search" class="search-bar" style="width: 100%; padding: 12px 45px; border-radius: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff;" placeholder="Search by TM No or Company..." oninput="filterRecords()"></div>
+            <table class="data-table"><thead><tr><th>TM No</th><th>Company</th><th>Created</th><th>Action</th></tr></thead><tbody id="db-list"></tbody></table>
+        </div>
+    </div>
+
+    <div id="user-sec" class="app-section hidden">
+        <div class="admin-stats" style="display: flex; gap: 15px; margin-bottom: 20px;"><div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 15px; flex: 1; text-align: center; border: 1px solid rgba(255,255,255,0.1);">Total Users <span class="stat-val" id="stat-total-users" style="font-size: 24px; font-weight: bold; color: var(--gold); display: block;">0</span></div><div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 15px; flex: 1; text-align: center; border: 1px solid rgba(255,255,255,0.1);">Active Users <span class="stat-val" id="stat-active-users" style="font-size: 24px; font-weight: bold; color: var(--gold); display: block;">0</span></div></div>
+        <div class="control-grid">
+            <h3 class="full-w">Add / Manage System User</h3>
+            <div class="input-group"><label>Email / Username</label><input type="text" id="new-user-email"></div>
+            <div class="input-group"><label>Password</label><input type="text" id="new-user-pass"></div>
+            <div class="input-group"><label>Daily Limit</label><input type="number" id="new-user-limit" value="10"></div>
+            <div class="input-group"><label>Role</label><select id="new-user-role"><option value="user">User</option><option value="admin">Admin</option></select></div>
+            <div class="input-group full-w"><label>Subscription Period</label><select id="new-user-expiry"><option value="7">7 Days</option><option value="15">15 Days</option><option value="20">20 Days</option><option value="30">30 Days</option><option value="lifetime">Life Time</option></select></div>
+            <div style="grid-column: 1/-1; display:flex; gap:10px;"><button class="btn-premium" style="width:100%" onclick="addNewUser()">SAVE USER</button></div>
+        </div>
+        <div style="background: var(--panel-bg); padding: 30px; border-radius: 20px; margin-top: 20px; overflow-x:auto;"><table class="data-table"><thead><tr><th>User</th><th>Pass</th><th>Limit (Usage)</th><th>Time Left</th><th>Status</th><th>Action</th></tr></thead><tbody id="user-list"></tbody></table></div>
+    </div>
+
+    <div id="maint-sec" class="app-section hidden"><div class="control-grid"><h3 class="full-w">System Control</h3><div class="input-group"><label>Maintenance Mode</label><select id="maint-toggle" onchange="toggleMaint(this.value)"><option value="false">OFF (Live)</option><option value="true">ON (Maintenance)</option></select></div></div></div>
+    <div id="notice-sec" class="app-section hidden"><div class="control-grid"><h3 class="full-w">System Notices</h3><div class="input-group full-w"><label>Message</label><textarea id="admin-notice-text" rows="2" placeholder="Send notice to all users..."></textarea></div><button class="btn-premium" onclick="updateNotice()">BROADCAST NOTICE</button></div></div>
+    <div id="ip-sec" class="app-section hidden"><div style="background: var(--panel-bg); padding: 30px; border-radius: 20px;"><h3>IP & Security Logs</h3><table class="data-table"><thead><tr><th>User</th><th>IP Address</th><th>Time</th></tr></thead><tbody id="ip-list"></tbody></table></div></div>
+</div>
+
+<div id="success-alert">Success!</div>
+
+<script>
+    let currentUser = null;
+    let currentLang = 'en';
+    const inputIds = [1,3,4,5,6,7,8,9,10,11,12,13,14,17,18];
+    let isAutoSyncEnabled = true;
+
+    const translations = {
+        en: {
+            labels: ["1. Form Name","3. Cert Title","4. TM No","5. Reg Date","6. Sealing Date","7. Class","8. Owner/Company","9. Address","10. Service Desc","11. Pen Serial","12. Signatory","13. Designation","14. Sealed Text","15. Logo Text", "17. Sub Word Logo"],
+            govName: "Government of the People's Republic of Bangladesh",
+            deptName: "Department of Patents, Designs & Trade Marks<br>Ministry of Industries, Shilpa Bhaban, Dhaka-1000.",
+            slNo: "Serial No.", tmNo: "Trademark No.", date: "Date:", sealed: "Sealed at my direction this",
+            dayOf: "day of", month: "Month", sigTitle: "Director General / Deputy Registrar<br>Department of Patents, Designs and Trademarks",
+            notes: "Registration is given for 7 years... (See Section 22 of the Trademarks Act, 2009)<br><b>This certificate is not for use in legal proceeding.</b>",
+            content: (name, addr, cls, date, desc) => `Certified that the Trademark of which a representation is annexed hereto has been registered in the name of <span class="bold">${name}</span>, <span>${addr}</span> organized under laws of Bangladesh, in <span class="bold">class <span>${cls}</span></span> as of <span class="bold">${date}</span> in respect of <span>${desc}</span>`
+        },
+        bn: {
+            labels: ["১. ফর্মের নাম","৩. সনদের শিরোনাম","৪. টিএম নং","৫. নিবন্ধনের তারিখ","৬. সিলের তারিখ","৭. ক্লাস","৮. মালিক/কোম্পানি","৯. ঠিকানা","১০. সেবার বিবরণ","১১. পেন সিরিয়াল","১২. স্বাক্ষরকারী","১৩. পদবী","১৪. সিলের টেকক্সট","১৫. লোগো টেকক্সট", "১৭. সাব ওয়ার্ড লোগো"],
+            govName: "গণপ্রজাতন্ত্রী বাংলাদেশ সরকার",
+            deptName: "পেটেন্ট, ডিজাইন ও ট্রেডমার্কস অধিদপ্তর<br>শিল্প মন্ত্রণালয়, শিল্প ভবন, ঢাকা-১০০০।",
+            slNo: "ক্রমিক নং", tmNo: "ট্রেডমার্ক নং", date: "তারিখ:", sealed: "আমার নির্দেশে অদ্য",
+            dayOf: "দিবসে", month: "মাস", sigTitle: "মহাপরিচালক / ডেপুটি রেজিস্ট্রার<br>পেটেন্ট, ডিজাইন ও ট্রেডমার্কস অধিদপ্তর",
+            notes: "রেজিস্ট্রেশন উপরোক্ত তারিখ হতে ৭ বছরের জন্য প্রদান করা হলো... (ট্রেডমার্কস আইন, ২০০৯ এর ধারা ২২ দ্রষ্টব্য)<br><b>এই সার্টিফিকেটটি আইনি কার্যধারা বা বিদেশে রেজিস্ট্রেশন প্রাপ্তির জন্য ব্যবহারযোগ্য নয়।</b>",
+            content: (name, addr, cls, date, desc) => `প্রত্যয়ন করা যাচ্ছে যে, এর সাথে সংযুক্ত প্রতীকের ট্রেডমার্কটি <span class="bold">${name}</span>, <span style="font-size: 11pt;">${addr}</span> এর নামে বাংলাদেশের আইন অনুযায়ী নিবন্ধিত হয়েছে, <span class="bold">ক্লাস <span>${cls}</span></span> এ <span class="bold">${date}</span> তারিখ হতে <span>${desc}</span> এর প্রেক্ষিতে।`
+        }
+    };
+
+    window.showLogin = () => { document.getElementById('agreement-overlay').style.display = 'none'; document.getElementById('login-overlay').style.display = 'flex'; };
+    window.showSection = (id, btn) => {
+        document.querySelectorAll('.app-section').forEach(s => s.classList.add('hidden'));
+        document.getElementById(id).classList.remove('hidden');
+        document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+        if(btn) btn.classList.add('active');
+        if(id === 'db-sec') loadRecords();
+        if(id === 'user-sec') loadAdminData();
+        if(window.innerWidth < 768) toggleSidebar();
+    };
+
+    async function logSecurity(email) {
+        try {
+            const res = await fetch('https://api.ipify.org?format=json');
+            const data = await res.json();
+            window.dbPush(window.dbRef(window.db, 'ip_logs'), { email, ip: data.ip, time: new Date().toLocaleString("en-BD", {timeZone: "Asia/Dhaka"}) });
+        } catch(e) {}
+    }
+
+    function setupUser(u) {
+        currentUser = u;
+        document.getElementById('agreement-overlay').style.display = 'none';
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('main-app').style.display = 'block';
+        document.getElementById('current-user-display').innerText = u.email || u.id;
+        if(u.role === 'admin') document.querySelectorAll('.adm-only').forEach(el => el.classList.remove('hidden'));
+        setLanguage('en'); startNoticeSystem(); updateLimitUI();
+    }
+
+    function logout() { sessionStorage.clear(); location.reload(); }
+    
+    function sync() {
+        inputIds.forEach(id => { 
+            let val = document.getElementById('i'+id).value; 
+            let disp = document.getElementById('disp-i'+id); 
+            if(disp) disp.innerText = val; 
+        });
+        const name = document.getElementById('i8').value; const addr = document.getElementById('i9').value; const cls = document.getElementById('i7').value;
+        const date = document.getElementById('i5').value; const desc = document.getElementById('i10').value;
+        document.getElementById('disp-main-content').innerHTML = translations[currentLang].content(name, addr, cls, date, desc);
+        document.getElementById('verify-id-text').innerText = document.getElementById('i4').value;
+        document.getElementById('disp-sig-draw').innerText = document.getElementById('i12').value;
+        document.getElementById('qrcode').style.display = 'none';
+    }
+
+    /* 🎯 FIX: QR GENERATION & LINKING */
+    function generateQRForCert(tmID) {
+        const qrc = document.getElementById('qrcode');
+        if(!qrc || !tmID) return;
+        qrc.innerHTML = "";
+        const verifyBase = "https://dpdt-govbd.vercel.app/verify.html"; // Dynamic Link
+        new QRCode(qrc, { 
+            text: `${verifyBase}?id=${tmID}`, 
+            width: 88, 
+            height: 88,
+            colorDark : "#111111",
+            colorLight : "#FCFBF4",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+        qrc.style.display = "block";
+    }
+
+    function handleField5Input() {
+        if(isAutoSyncEnabled) {
+            const f5Val = document.getElementById('i5').value; const parts = f5Val.split('/');
+            if(parts.length === 3) {
+                let d = parseInt(parts[0]), m = parseInt(parts[1]), y = parseInt(parts[2]);
+                const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+                document.getElementById('i6').value = `${d.toString().padStart(2, '0')} ${months[(m-1)%12]} ${y+4}`;
+            }
+        }
+        sync();
+    }
+
+    function handleField6Input() { isAutoSyncEnabled = false; sync(); }
+    
+    function generateDateForField(num) {
+        const day = Math.floor(Math.random() * 28) + 1; const month = Math.floor(Math.random() * 12) + 1; const year = 2018 + Math.floor(Math.random() * 5);
+        if(num === 5) { document.getElementById('i5').value = `${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}/${year}`; isAutoSyncEnabled = true; handleField5Input(); }
+        else { const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]; document.getElementById('i6').value = `${day.toString().padStart(2, '0')} ${months[month-1]} ${year+4}`; isAutoSyncEnabled = false; sync(); }
+    }
+
+    function generateRandomAddress() {
+        const areas = ["Mohammadpur", "Dhanmondi", "Gulshan", "Uttara", "Banani", "Motijheel"];
+        const plots = ["GA", "KA", "12/A", "Block-C", "Level-5", "Plot-88"];
+        document.getElementById('i9').value = `Office No: ${Math.floor(100+Math.random()*800)}, Plot: ${plots[Math.floor(Math.random()*plots.length)]}, ${areas[Math.floor(Math.random()*areas.length)]}, Dhaka.`;
+        sync();
+    }
+
+    async function downloadFile(type) {
+        const cert = document.getElementById('cert-print'); 
+        showAlert("Generating 2K Export...");
+        const canvas = await html2canvas(cert, { scale: 4.0, useCORS: true, allowTaint: true, logging: false, backgroundColor: null }); 
+        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+        if(type === 'jpg') { let l = document.createElement('a'); l.download = `Cert_${document.getElementById('i4').value}.jpg`; l.href = imgData; l.click(); }
+        else { const { jsPDF } = window.jspdf; const p = new jsPDF('p', 'mm', 'a4'); p.addImage(imgData, 'JPEG', 0, 0, 210, 297); p.save(`Cert_${document.getElementById('i4').value}.pdf`); }
+    }
+
+    /* 🎯 FIX: LOGO & HEADER COLOR SAVING */
+    async function saveToDB() {
+        if(!currentUser) return; 
+        const tm = document.getElementById('i4').value.trim();
+        if(!tm) { alert("Enter TM Number!"); return; }
+        
+        const userKey = (currentUser.email || currentUser.id).toLowerCase().replace(/[.$#[\]]/g, "_");
+        if(currentUser.role !== 'admin') {
+            const snap = await window.dbGet(window.dbRef(window.db, 'users/' + userKey)); const u = snap.val();
+            if(u.usage_count >= u.daily_limit) { alert("Daily Limit Reached!"); return; }
+            await window.dbUpdate(window.dbRef(window.db, 'users/' + userKey), { usage_count: (u.usage_count || 0) + 1 });
+            currentUser.usage_count = (u.usage_count || 0) + 1;
+        }
+
+        const logoImg = document.getElementById('disp-logo-img');
+        const logoData = logoImg.style.display !== 'none' ? logoImg.src : null; // Base64
+        const headerColor = document.getElementById('logoColor').value;
+
+        const formData = {}; 
+        inputIds.forEach(id => formData['i'+id] = document.getElementById('i'+id).value);
+        
+        generateQRForCert(tm);
+        
+        await window.dbSet(window.dbRef(window.db, 'records/' + tm), { 
+            tmNo: tm, 
+            company: document.getElementById('i8').value, 
+            createdAt: new Date().toLocaleString(), 
+            formData,
+            logo: logoData,
+            hColor: headerColor,
+            zoom: document.getElementById('logoZoom').value
+        });
+        
+        showAlert("Published & QR Merged!"); 
+        updateLimitUI();
+    }
+
+    function toggleUserPause(key, currentStatus) { window.dbUpdate(window.dbRef(window.db, 'users/' + key), { status: currentStatus === 'paused' ? 'active' : 'paused' }); }
+    function updateAdminLimit(key, val) { window.dbUpdate(window.dbRef(window.db, 'users/' + key), { daily_limit: parseInt(val) }); }
+    function getTimeLeft(expiry) {
+        if(expiry === 'lifetime') return "LifeTime"; const diff = new Date(expiry) - new Date(); if(diff <= 0) return "Expired";
+        const d = Math.floor(diff / 86400000); const h = Math.floor((diff / 3600000) % 24); return `${d}d ${h}h`;
+    }
+
+    function loadAdminData() {
+        window.dbOnValue(window.dbRef(window.db, 'users'), snap => {
+            const data = snap.val(); const list = document.getElementById('user-list'); list.innerHTML = "";
+            let total = 0, active = 0;
+            if(data) Object.keys(data).forEach(k => {
+                const u = data[k]; total++; if(Date.now() - u.last_active < 300000) active++;
+                list.innerHTML += `<tr><td>${u.email}</td><td>${u.pass}</td><td>${u.usage_count || 0} / <input type="number" value="${u.daily_limit}" style="width:50px; padding:2px; background:transparent; border:1px solid #555; color:#fff;" onchange="updateAdminLimit('${k}', this.value)"></td><td>${getTimeLeft(u.expiry_date)}</td><td style="color:${u.status === 'paused' ? '#ef4444' : '#10b981'}">${u.status.toUpperCase()}</td><td><div style="display:flex; gap:5px;"><button class="btn-outline" onclick="resetUserLimit('${k}')">Reset</button><button class="btn-outline" onclick="toggleUserPause('${k}', '${u.status}')">${u.status === 'paused' ? 'Resume' : 'Pause'}</button><button onclick="window.dbRemove(window.dbRef(window.db, 'users/${k}'))" style="color:red; background:none; border:none; cursor:pointer;"><i class="fas fa-trash"></i></button></div></td></tr>`;
+            });
+            document.getElementById('stat-total-users').innerText = total; document.getElementById('stat-active-users').innerText = active;
+        });
+    }
+
+    function loadRecords() {
+        window.dbOnValue(window.dbRef(window.db, 'records'), snap => {
+            const data = snap.val(); const list = document.getElementById('db-list'); list.innerHTML = "";
+            if(data) Object.keys(data).reverse().forEach(k => { 
+                const r = data[k];
+                const viewUrl = `https://dpdt-govbd.vercel.app/verify.html?id=${r.tmNo}`;
+                const deleteBtn = (currentUser && currentUser.role === 'admin') ? `<button onclick="window.dbRemove(window.dbRef(window.db, 'records/${k}'))" style="color:#ef4444; background:none; border:none; cursor:pointer; margin-left:10px;"><i class="fas fa-trash"></i></button>` : '';
+                list.innerHTML += `<tr><td>${r.tmNo}</td><td>${r.company}</td><td>${r.createdAt}</td><td><div style="display:flex; gap:8px; align-items:center;"><a href="${viewUrl}" target="_blank" class="btn-outline" style="text-decoration:none; padding:4px 8px; font-size:10px;"><i class="fas fa-eye"></i> View</a><button onclick="copyToClipboard('${viewUrl}')" class="btn-outline" style="padding:4px 8px; font-size:10px;"><i class="fas fa-copy"></i> Copy</button>${deleteBtn}</div></td></tr>`; 
+            });
+        });
+    }
+
+    function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => showAlert("Link Copied!")); }
+    function filterRecords() { const term = document.getElementById('record-search').value.toLowerCase(); const rows = document.getElementById('db-list').getElementsByTagName('tr'); for (let row of rows) row.style.display = row.innerText.toLowerCase().includes(term) ? "" : "none"; }
+    
+    function setLanguage(lang) { 
+        currentLang = lang; 
+        document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active')); 
+        document.getElementById('lang-' + lang).classList.add('active'); 
+        const t = translations[lang]; 
+        inputIds.forEach((num, i) => { if(document.getElementById('l'+num)) document.getElementById('l'+num).innerText = t.labels[i]; }); 
+        document.getElementById('txt-gov-name').innerText = t.govName; 
+        document.getElementById('txt-dept-name').innerHTML = t.deptName; 
+        document.getElementById('txt-sl-no').innerText = t.slNo; 
+        document.getElementById('txt-tm-no').innerText = t.tmNo; 
+        document.getElementById('txt-date').innerText = t.date; 
+        document.getElementById('txt-sealed-text').innerText = t.sealed; 
+        document.getElementById('txt-day-of').innerText = t.dayOf; 
+        document.getElementById('txt-month').innerText = t.month; 
+        document.getElementById('txt-sig-title').innerHTML = t.sigTitle; 
+        document.getElementById('txt-bottom-notes').innerHTML = t.notes; 
+        sync(); 
+    }
+
+    function toggleTheme() { document.body.classList.toggle('light-mode'); const isLight = document.body.classList.contains('light-mode'); localStorage.setItem('theme', isLight ? 'light' : 'dark'); }
+    function makeRand(id) { document.getElementById(id).value = Math.floor(100000 + Math.random() * 900000); sync(); }
+    function toggleSidebar() { document.getElementById('sidebar').classList.toggle('active'); }
+    function showAlert(msg) { const a=document.getElementById('success-alert'); if(a){a.innerText=msg; a.style.display='block'; setTimeout(()=>a.style.display='none',3000);} }
+    
+    function applyZoom(val) { 
+        const img = document.getElementById('disp-logo-img'); 
+        if(img.src) { 
+            img.style.maxHeight = val + 'px'; 
+            img.style.maxWidth = (val * 2.3) + 'px'; 
+            img.style.opacity = "0.92"; 
+        } 
+    }
+    
+    function applyColor(c) { 
+        document.getElementById('disp-i17').style.color = c; 
+    }
+
+    function handleLogo(input) { 
+        if (input.files && input.files[0]) { 
+            const r = new FileReader(); 
+            r.onload = e => { 
+                const img = document.getElementById('disp-logo-img'); 
+                img.src = e.target.result; 
+                img.style.display = 'block'; 
+                document.getElementById('disp-i17').style.display = 'none'; 
+                sync(); 
+            }; 
+            r.readAsDataURL(input.files[0]); 
+        } 
+    }
+
+    function updateLimitUI() { 
+        const info = document.getElementById('user-limit-info'); 
+        if(currentUser && info) { 
+            const timeLeft = getTimeLeft(currentUser.expiry_date); 
+            info.innerHTML = `Usage: ${currentUser.usage_count || 0}/${currentUser.daily_limit} | Validity: ${timeLeft}`; 
+        } 
+    }
+
+    function startNoticeSystem() { 
+        window.dbOnValue(window.dbRef(window.db, 'system/notice'), snap => { 
+            const msg = snap.val(); 
+            if(msg) { 
+                const p = document.getElementById('notice-popup'); 
+                p.innerText = msg; 
+                p.style.display = 'block'; 
+                setTimeout(()=>p.style.display='none', 8000); 
+            } 
+        }); 
+        window.dbOnValue(window.dbRef(window.db, 'system/maintenance'), snap => {
+            if(snap.val() === true && (currentUser && currentUser.role !== 'admin')) {
+                document.getElementById('maintenance-overlay').classList.remove('hidden');
+            } else {
+                document.getElementById('maintenance-overlay').classList.add('hidden');
+            }
+        });
+    }
+
+    function toggleMaint(v) { window.dbSet(window.dbRef(window.db, 'system/maintenance'), v === 'true'); }
+    function updateNotice() { window.dbSet(window.dbRef(window.db, 'system/notice'), document.getElementById('admin-notice-text').value); showAlert("Notice Sent!"); }
+    function resetAllCertificates() { if(confirm("Clear all records?")) window.dbRemove(window.dbRef(window.db, 'records')); }
+</script>
+</body>
+</html>
